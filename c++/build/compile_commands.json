@@ -1,0 +1,7 @@
+[
+{
+  "directory": "/tmp/StochasticWassersteinBarycenters/c++/build",
+  "command": "/usr/bin/c++   -isystem /tmp/StochasticWassersteinBarycenters/c++/lib/Eigen -isystem /tmp/StochasticWassersteinBarycenters/c++/lib/LBFGS -isystem /tmp/StochasticWassersteinBarycenters/c++/lib/LBFGS/LBFGS -I/tmp/StochasticWassersteinBarycenters/c++/src -isystem /usr/include/opencv   -O3 -std=c++14 -ggdb -fopenmp   -o CMakeFiles/Barycenters.dir/src/main.cpp.o -c /tmp/StochasticWassersteinBarycenters/c++/src/main.cpp",
+  "file": "/tmp/StochasticWassersteinBarycenters/c++/src/main.cpp"
+}
+]
