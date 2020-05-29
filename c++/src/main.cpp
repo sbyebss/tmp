@@ -3,7 +3,6 @@
 #include <fstream>
 #include <iostream>
 #include <vector>
-#include <opencv2/opencv.hpp>
 
 #include "boost/program_options.hpp"
 
@@ -13,24 +12,12 @@
 #include "sampler.h"
 #include "scene.h"
 #include "site.h"
-#include "cnpy.h"
 
 using namespace Eigen;
 namespace po = boost::program_options;
 
 const int DROPOFF = 200;
 std::string folder;
-
-void cnpy2eigen(std::string data_fname, Eigen::MatrixXd &mat_out)
-{
-  cnpy::NpyArray npy_data = cnpy::npy_load(data_fname);
-  int data_row = npy_data.shape[0];
-  int data_col = npy_data.shape[1];
-  double *ptr = static_cast<double *>(malloc(data_row * data_col * sizeof(double)));
-  memcpy(ptr, npy_data.data<double>(), data_row * data_col * sizeof(double));
-  cv::Mat dmat = cv::Mat(cv::Size(data_col, data_row), CV_64F, ptr); // CV_64F is equivalent double
-  new (&mat_out) Eigen::Map<Eigen::Matrix<double, Eigen::Dynamic, Eigen::Dynamic>>(reinterpret_cast<double *>(dmat.data), data_col, data_row);
-}
 
 void test_line_2d(int iters = 100, int num = 3)
 {
@@ -242,7 +229,6 @@ void test_gaussian_mixture(int iters = 100, int num = 10)
 
   Sampler<VectorXd> *mixture = new GaussianMixture(mus, sigmas, ws);
 
-  // this scene use the mixture distribution/sampler
   auto scene_ptr = std::make_shared<Scene<Sampler<VectorXd>, VectorXd>>(mixture, 10 * 10);
   auto pwc = std::make_shared<Powercell<VectorXd>>();
   auto site = std::make_shared<Site<Sampler<VectorXd>, VectorXd>>(mixture, pwc);
@@ -264,7 +250,6 @@ void test_gaussian_mixture(int iters = 100, int num = 10)
     std::string uniform = folder + std::to_string(i + 1) + "-uniform.txt";
     std::ofstream funi(uniform, std::ofstream::trunc);
     for (int j = 0; j <= i; ++j)
-      // generate sample from the sampler
       funi << scene_ptr->sample() << std::endl;
     funi.close();
 
@@ -276,7 +261,7 @@ void test_gaussian_mixture(int iters = 100, int num = 10)
   }
 }
 
-void test_gaussians_4(int iters = 3, int num = 10)
+void test_gaussians(int iters = 100, int num = 10)
 {
   std::cout << "Testing with several Gaussians (2D)." << std::endl;
   std::cout << "=========================================" << std::endl;
@@ -286,227 +271,31 @@ void test_gaussians_4(int iters = 3, int num = 10)
   std::vector<double> ws;
 
   std::srand((unsigned int)31);
-  // generate distributions
-  Vector2d mu1(2);
-  mu1 << 10, 10;
-  Vector2d mu2 = VectorXd::Zero(2);
-  Vector2d mu3(2);
-  mu3 << 2, 0;
-  Vector2d mu4(2);
-  mu4 << 0, 2;
-  // add mean and variance for marginals
-  Matrix2d sigma1;
-  sigma1 << 2, 1, 1, 1;
-  Matrix2d sigma2;
-  sigma2 << 1.5, -1, -1, 1.5;
-  Matrix2d sigma3;
-  sigma3 << 3, -2, -2, 3;
-  Matrix2d sigma4;
-  sigma4 << 2, 0, 0, 2;
+  for (int i = 0; i < num; ++i)
+  {
+    VectorXd mu = VectorXd::Zero(2);
+    MatrixXd sigma = MatrixXd::Random(2, 2);
+    sigma = sigma.adjoint() * sigma;
 
-  mus.push_back(mu1);
-  sigmas.push_back(sigma1);
-  mus.push_back(mu2);
-  sigmas.push_back(sigma2);
-  mus.push_back(mu3);
-  sigmas.push_back(sigma3);
-  mus.push_back(mu4);
-  sigmas.push_back(sigma4);
+    double d1 = sigma(0, 0) / sigma(1, 1);
+    double d2 = sigma(1, 1) / sigma(0, 0);
+    if (d1 > 10)
+      sigma(1, 1) += (sigma(0, 0) + sigma(1, 1)) / 2.0;
+    else if (d2 > 10)
+      sigma(0, 0) += (sigma(0, 0) + sigma(1, 1)) / 2.0;
 
-  std::ofstream fcomps("../marginals/gaussian/test4.txt", std::ofstream::trunc);
+    mus.push_back(mu);
+    sigmas.push_back(sigma);
+    ws.push_back(1.0);
+  }
+
+  std::ofstream fcomps("../results/gaussian/components.txt", std::ofstream::trunc);
   for (int i = 0; i < num; ++i)
   {
     fcomps << mus[i].transpose() << std::endl;
     fcomps << sigmas[i].transpose() << std::endl;
   }
 
-  //  generate samples for generator
-  VectorXd a(2);
-  VectorXd b(2);
-  a << -3, -3;
-  b << 3, 3;
-  double vol = 1.0;
-  for (int i = 0; i < a.size(); ++i)
-  {
-    vol *= (b(i) - a(i));
-  }
-  Sampler<VectorXd> *gamma = new Uniform<VectorXd>(a, b);
-  auto scene_ptr = std::make_shared<Scene<Sampler<VectorXd>, VectorXd>>(gamma, vol);
-
-  std::vector<std::shared_ptr<Site<Sampler<VectorXd>, VectorXd>>> sites;
-  for (int i = 0; i < num; ++i)
-  {
-    Sampler<VectorXd> *gaussian = new Gaussian(mus[i], sigmas[i]);
-    auto pwc = std::make_shared<Powercell<VectorXd>>();
-    auto site = std::make_shared<Site<Sampler<VectorXd>, VectorXd>>(gaussian, pwc);
-    sites.push_back(site);
-  }
-
-  Optimizer<Sampler<VectorXd>, VectorXd, MatrixXd> opt(scene_ptr);
-  opt.set_parameters(0.01, 0.99);
-  opt.GLOBAL_OPT = true;
-
-  for (int i = 0; i < iters; ++i)
-  {
-    std::cout << "Iteration " << i + 1 << std::endl
-              << "========================="
-              << std::endl
-              << std::endl;
-    auto pts = opt.run(sites, 1000);
-    std::cout << std::endl;
-
-    std::string uniform = folder + std::to_string(i + 1) + "-uniform.txt";
-    std::ofstream funi(uniform, std::ofstream::trunc);
-    for (int j = 0; j <= i; ++j)
-      funi << scene_ptr->sample() << std::endl;
-    funi.close();
-
-    std::string result = folder + std::to_string(i + 1) + "-res.txt";
-    std::ofstream fres(result, std::ofstream::trunc);
-    for (auto pt : pts)
-      fres << pt.transpose() << std::endl;
-    fres.close();
-  }
-}
-
-void test_gaussians_4dot1(int iters = 3, int num = 10)
-{
-  std::cout << "Testing with several Gaussians (2D)." << std::endl;
-  std::cout << "=========================================" << std::endl;
-
-  std::vector<VectorXd> mus;
-  std::vector<MatrixXd> sigmas;
-  std::vector<double> ws;
-
-  std::srand((unsigned int)31);
-  // generate distributions
-  Vector2d mu1(2);
-  mu1 << 10, 10;
-  Vector2d mu2 = VectorXd::Zero(2);
-  Vector2d mu3(2);
-  mu3 << 2, 0;
-  Vector2d mu4(2);
-  mu4 << 0, 2;
-  // add mean and variance for marginals
-  Matrix2d sigma1;
-  sigma1 << 2, 1, 1, 1;
-  Matrix2d sigma2;
-  sigma2 << 1.5, -1, -1, 1.5;
-  Matrix2d sigma3;
-  sigma3 << 3, -2, -2, 3;
-  Matrix2d sigma4;
-  sigma4 << 2, 0, 0, 2;
-
-  mus.push_back(mu1);
-  sigmas.push_back(sigma1);
-  mus.push_back(mu2);
-  sigmas.push_back(sigma2);
-  mus.push_back(mu3);
-  sigmas.push_back(sigma3);
-  mus.push_back(mu4);
-  sigmas.push_back(sigma4);
-
-  std::ofstream fcomps("../marginals/gaussian/test4.txt", std::ofstream::trunc);
-  for (int i = 0; i < num; ++i)
-  {
-    fcomps << mus[i].transpose() << std::endl;
-    fcomps << sigmas[i].transpose() << std::endl;
-  }
-
-  //  generate samples for generator
-  VectorXd a(2);
-  VectorXd b(2);
-  a << -3, -3;
-  b << 3, 3;
-  double vol = 1.0;
-  for (int i = 0; i < a.size(); ++i)
-  {
-    vol *= (b(i) - a(i));
-  }
-  Sampler<VectorXd> *gamma = new Uniform<VectorXd>(a, b);
-  auto scene_ptr = std::make_shared<Scene<Sampler<VectorXd>, VectorXd>>(gamma, vol);
-
-  std::vector<std::shared_ptr<Site<Sampler<VectorXd>, VectorXd>>> sites;
-  for (int i = 0; i < num; ++i)
-  {
-    Sampler<VectorXd> *gaussian = new Gaussian(mus[i], sigmas[i]);
-    auto pwc = std::make_shared<Powercell<VectorXd>>();
-    auto site = std::make_shared<Site<Sampler<VectorXd>, VectorXd>>(gaussian, pwc);
-    sites.push_back(site);
-  }
-
-  Optimizer<Sampler<VectorXd>, VectorXd, MatrixXd> opt(scene_ptr);
-  opt.set_parameters(0.01, 0.99);
-  opt.GLOBAL_OPT = true;
-
-  for (int i = 0; i < iters; ++i)
-  {
-    std::cout << "Iteration " << i + 1 << std::endl
-              << "========================="
-              << std::endl
-              << std::endl;
-    auto pts = opt.run(sites, 1000);
-    std::cout << std::endl;
-
-    std::string uniform = folder + std::to_string(i + 1) + "-uniform.txt";
-    std::ofstream funi(uniform, std::ofstream::trunc);
-    for (int j = 0; j <= i; ++j)
-      funi << scene_ptr->sample() << std::endl;
-    funi.close();
-
-    std::string result = folder + std::to_string(i + 1) + "-res.txt";
-    std::ofstream fres(result, std::ofstream::trunc);
-    for (auto pt : pts)
-      fres << pt.transpose() << std::endl;
-    fres.close();
-  }
-}
-
-void test_gaussians_7dot11(int iters = 3, int num = 10)
-{
-  std::cout << "Testing with several Gaussians (2D)." << std::endl;
-  std::cout << "=========================================" << std::endl;
-
-  std::vector<VectorXd> mus;
-  std::vector<MatrixXd> sigmas;
-  std::vector<double> ws;
-
-  std::srand((unsigned int)31);
-  // generate distributions
-  Vector2d mu1(2);
-  mu1 << 10, 10;
-  Vector2d mu2 = VectorXd::Zero(2);
-  Vector2d mu3(2);
-  mu3 << 2, 0;
-  Vector2d mu4(2);
-  mu4 << 0, 2;
-  // add mean and variance for marginals
-  Matrix2d sigma1;
-  sigma1 << 2, 1, 1, 1;
-  Matrix2d sigma2;
-  sigma2 << 1.5, -1, -1, 1.5;
-  Matrix2d sigma3;
-  sigma3 << 3, -2, -2, 3;
-  Matrix2d sigma4;
-  sigma4 << 2, 0, 0, 2;
-
-  mus.push_back(mu1);
-  sigmas.push_back(sigma1);
-  mus.push_back(mu2);
-  sigmas.push_back(sigma2);
-  mus.push_back(mu3);
-  sigmas.push_back(sigma3);
-  mus.push_back(mu4);
-  sigmas.push_back(sigma4);
-
-  std::ofstream fcomps("../marginals/gaussian/test4.txt", std::ofstream::trunc);
-  for (int i = 0; i < num; ++i)
-  {
-    fcomps << mus[i].transpose() << std::endl;
-    fcomps << sigmas[i].transpose() << std::endl;
-  }
-
-  //  generate samples for generator
   VectorXd a(2);
   VectorXd b(2);
   a << -3, -3;
@@ -582,7 +371,7 @@ int main(int argc, char *argv[])
 {
   // Declare the supported options.
   po::options_description desc("Allowed options");
-  desc.add_options()("help", "produce help message")("folder", po::value<std::string>(), "folder to save results in")("uniform2d", "two 2D uniform distributions")("uniform3d", po::value<int>(), "3D uniform distributions")("mixture", po::value<int>(), "Gaussian mixture model")("gaussian4", po::value<int>(), "Gaussian 4 distributions")("gaussian4dot1", po::value<int>(), "Gaussian 4dot1 distributions")("gaussian7dot11", po::value<int>(), "Gaussian 7dot11 distributions")("line2d", po::value<int>(), "lines in 2D")("image", po::value<std::string>(), "images");
+  desc.add_options()("help", "produce help message")("folder", po::value<std::string>(), "folder to save results in")("uniform2d", "two 2D uniform distributions")("uniform3d", po::value<int>(), "3D uniform distributions")("mixture", po::value<int>(), "Gaussian mixture model")("gaussian", po::value<int>(), "Gaussian distributions")("line2d", po::value<int>(), "lines in 2D")("image", po::value<std::string>(), "images");
 
   po::variables_map vm;
   po::store(po::parse_command_line(argc, argv, desc), vm);
@@ -595,7 +384,6 @@ int main(int argc, char *argv[])
   }
 
   folder = vm["folder"].as<std::string>();
-
   if (vm.count("uniform2d"))
   {
     std::cout << "Testing uniform distribution in 2D." << std::endl;
@@ -613,23 +401,11 @@ int main(int argc, char *argv[])
     int num = vm["mixture"].as<int>();
     test_gaussian_mixture(200, num);
   }
-  if (vm.count("gaussian4"))
+  if (vm.count("gaussian"))
   {
-    std::cout << "Testing 4 Gaussians." << std::endl;
-    int num = vm["gaussian4"].as<int>();
-    test_gaussians_4(2000, num);
-  }
-  if (vm.count("gaussian4dot1"))
-  {
-    std::cout << "Testing 4.1 Gaussians." << std::endl;
-    int num = vm["gaussian4dot1"].as<int>();
-    test_gaussians_4dot1(2000, num);
-  }
-  if (vm.count("gaussian7dot11"))
-  {
-    std::cout << "Testing 7dot11 Gaussians." << std::endl;
-    int num = vm["gaussian7dot11"].as<int>();
-    test_gaussians_7dot11(2000, num);
+    std::cout << "Testing several Gaussians." << std::endl;
+    int num = vm["gaussian"].as<int>();
+    test_gaussians(200, num);
   }
   if (vm.count("line2d"))
   {
